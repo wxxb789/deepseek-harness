@@ -2,8 +2,6 @@ name: Build Desktop installers
 
 # Standalone artifacts bundle their runtime without any online update or policy services.
 on:
-  push:
-    branches: [fix/desktop-standalone-synced]
   workflow_dispatch:
 
 concurrency:
