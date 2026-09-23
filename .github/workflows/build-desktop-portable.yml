@@ -1,0 +1,174 @@
+name: Build Desktop installers
+
+# Packaging embeds the selected test update and policy origins. Supply real
+# endpoints when dispatching; the installer is not published to a release feed.
+on:
+  workflow_dispatch:
+    inputs:
+      update_origin:
+        description: HTTPS origin of your Desktop test update feed
+        required: true
+        type: string
+      policy_origin:
+        description: HTTPS origin of your mandatory-update policy service
+        required: true
+        type: string
+      login_origin:
+        description: HTTPS origin of the test policy login page
+        required: true
+        type: string
+
+concurrency:
+  group: desktop-installers-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DSH_TELEMETRY_DISABLED: '1'
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: mac-arm64
+            runner: macos-latest
+          - target: win-x64
+            runner: windows-2025
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: actions/setup-python@v6.3.0
+        with:
+          python-version: '3.11'
+
+      - name: Enable Windows symlinks
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >-
+          reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock"
+          /t REG_DWORD /f /v "AllowDevelopmentWithoutDevLicense" /d "1"
+
+      - name: Configure packaging
+        shell: bash
+        env:
+          APP_ID: ${{ vars.DSH_DESKTOP_APP_ID || 'com.wxxb789.deepseek-harness' }}
+          UPDATE_ORIGIN: ${{ inputs.update_origin }}
+          POLICY_ORIGIN: ${{ inputs.policy_origin }}
+          LOGIN_ORIGIN: ${{ inputs.login_origin }}
+          MAC_SIGNING_IDENTITY: ${{ matrix.target == 'mac-arm64' && vars.DSH_MAC_SIGNING_IDENTITY || '' }}
+          MAC_TEAM_ID: ${{ matrix.target == 'mac-arm64' && vars.DSH_MAC_TEAM_ID || '' }}
+          MAC_P12_BASE64: ${{ matrix.target == 'mac-arm64' && secrets.DSH_MAC_P12_BASE64 || '' }}
+          MAC_P12_PASSWORD: ${{ matrix.target == 'mac-arm64' && secrets.DSH_MAC_P12_PASSWORD || '' }}
+          MAC_NOTARY_P8_BASE64: ${{ matrix.target == 'mac-arm64' && secrets.DSH_MAC_NOTARY_P8_BASE64 || '' }}
+          MAC_NOTARY_KEY_ID: ${{ matrix.target == 'mac-arm64' && secrets.DSH_MAC_NOTARY_KEY_ID || '' }}
+          MAC_NOTARY_ISSUER: ${{ matrix.target == 'mac-arm64' && secrets.DSH_MAC_NOTARY_ISSUER || '' }}
+        run: |
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          from pathlib import Path
+          import secrets
+
+          def required(name):
+              value = os.environ.get(name, '').strip()
+              if not value:
+                  raise SystemExit(f'Configure {name} before building Desktop installers')
+              return value
+
+          def line(name, value):
+              if any(character in value for character in ('\r', '\n', '\0')):
+                  raise SystemExit(f'{name} cannot contain a newline or NUL')
+              quote = "'" if "'" not in value else '"' if '"' not in value else None
+              if quote is None:
+                  raise SystemExit(f'{name} cannot contain both quote types in a dotenv file')
+              return f'{name}={quote}{value}{quote}\n'
+
+          settings = {
+              'DSH_DESKTOP_APP_ID': required('APP_ID'),
+              'DSH_DESKTOP_AUTO_UPDATE_ENV': 'test',
+              'DOWNLOAD_TEST_ORIGIN': required('UPDATE_ORIGIN'),
+              'DOWNLOAD_TEST_RELEASE_ID': secrets.token_hex(16),
+              'DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN': required('POLICY_ORIGIN'),
+              'DSH_DESKTOP_MANDATORY_UPDATE_CONFIG': json.dumps({
+                  'allowedAuthOrigins': [required('LOGIN_ORIGIN')],
+              }),
+          }
+          target = os.environ['RUNNER_OS']
+          if target == 'macOS':
+              for name in ('MAC_SIGNING_IDENTITY', 'MAC_TEAM_ID', 'MAC_P12_BASE64',
+                           'MAC_NOTARY_P8_BASE64', 'MAC_NOTARY_KEY_ID', 'MAC_NOTARY_ISSUER'):
+                  required(name)
+              signing = Path(os.environ['RUNNER_TEMP']) / 'dsh-desktop-signing'
+              signing.mkdir(mode=0o700)
+              for source, filename in (('MAC_P12_BASE64', 'developer-id.p12'),
+                                       ('MAC_NOTARY_P8_BASE64', 'notary-key.p8')):
+                  try:
+                      data = base64.b64decode(''.join(required(source).split()), validate=True)
+                  except ValueError:
+                      raise SystemExit(f'{source} must contain base64-encoded file bytes') from None
+                  destination = signing / filename
+                  destination.write_bytes(data)
+                  destination.chmod(0o600)
+              settings.update({
+                  'DSH_DESKTOP_MACOS_SIGNING_IDENTITY': required('MAC_SIGNING_IDENTITY'),
+                  'DSH_DESKTOP_MACOS_TEAM_ID': required('MAC_TEAM_ID'),
+                  'CSC_LINK': str(signing / 'developer-id.p12'),
+                  'CSC_KEY_PASSWORD': os.environ.get('MAC_P12_PASSWORD', ''),
+                  'APPLE_API_KEY': str(signing / 'notary-key.p8'),
+                  'APPLE_API_KEY_ID': required('MAC_NOTARY_KEY_ID'),
+                  'APPLE_API_ISSUER': required('MAC_NOTARY_ISSUER'),
+              })
+          elif target != 'Windows':
+              raise SystemExit(f'Unsupported runner OS: {target}')
+          path = Path('apps/desktop') / ('.env.macos' if target == 'macOS' else '.env.windows')
+          path.write_text(''.join(line(name, value) for name, value in settings.items()), encoding='utf-8')
+          path.chmod(0o600)
+          PY
+
+      - name: Install dependencies (build runner only)
+        run: pnpm install --frozen-lockfile
+
+      - name: Package signed and notarized macOS arm64 app
+        if: runner.os == 'macOS'
+        run: pnpm run package:desktop:mac:arm64
+
+      - name: Package unsigned Windows x64 installer
+        if: runner.os == 'Windows'
+        run: pnpm run package:desktop:win:x64:unsigned
+
+      - name: Upload macOS installers
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v7
+        with:
+          name: dsh-desktop-mac-arm64-${{ github.sha }}
+          path: |
+            apps/desktop/.desktop-build/targets/mac-arm64/artifacts/*.dmg
+            apps/desktop/.desktop-build/targets/mac-arm64/artifacts/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Windows installer
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: dsh-desktop-win-x64-unsigned-${{ github.sha }}
+          path: apps/desktop/.desktop-build/targets/win-x64/unsigned-artifacts/*.exe
+          if-no-files-found: error
+          retention-days: 7
