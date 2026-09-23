@@ -76,6 +76,25 @@ describe('Desktop local packaging configuration', () => {
     })
   })
 
+  it('reads an exact macOS P12 password from a file without dotenv quote or escape decoding', async () => {
+    await withDirectory(async (directory) => {
+      const password = 'a\'b"\\n# $end\n'
+      await writeFile(join(directory, 'password.txt'), password)
+      await writeFile(join(directory, '.env.macos'), 'CSC_KEY_PASSWORD_FILE=password.txt\n')
+      expect(loadDesktopPackageEnvironment('darwin', { CSC_KEY_PASSWORD: 'stale' }, directory))
+        .toEqual({ CSC_KEY_PASSWORD: password })
+
+      await writeFile(join(directory, 'password.txt'), '')
+      expect(loadDesktopPackageEnvironment('darwin', {}, directory).CSC_KEY_PASSWORD).toBe('')
+      await writeFile(join(directory, '.env.macos'), 'CSC_KEY_PASSWORD_FILE=missing.txt\n')
+      expect(() => loadDesktopPackageEnvironment('darwin', {}, directory)).toThrow(/CSC_KEY_PASSWORD_FILE must identify a readable local file/u)
+      await writeFile(join(directory, '.env.macos'), 'CSC_KEY_PASSWORD_FILE=password.txt\nCSC_KEY_PASSWORD=other\n')
+      expect(() => loadDesktopPackageEnvironment('darwin', {}, directory)).toThrow(/set only one of CSC_KEY_PASSWORD/u)
+      await writeFile(join(directory, '.env.windows'), 'CSC_KEY_PASSWORD_FILE=password.txt\n')
+      expect(() => loadDesktopPackageEnvironment('win32', {}, directory)).toThrow(/unsupported setting CSC_KEY_PASSWORD_FILE/u)
+    })
+  })
+
   it.each(['win32', 'darwin'] as const)('owns the %s release ID in its platform file', async (platform) => {
     await withDirectory(async (directory) => {
       const settings = Object.entries(RELEASE).map(([name, value]) => `${name}='${value}'`).join('\n') + '\n'

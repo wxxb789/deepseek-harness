@@ -271,9 +271,9 @@ pnpm run package:desktop:win:x64:unsigned
 
 运行 [Build Desktop installers](../../.github/workflows/build-desktop-portable.yml)，填写测试更新源、强制更新策略服务及测试登录页面各自的 HTTPS origin。该 workflow 在对应架构的 GitHub runner 上构建经签名和公证的 macOS arm64 DMG/ZIP，以及未签名的 Windows x64 NSIS 安装包，并将产物保留七天。它不会发布更新源。每个 job 会生成随机测试批次 ID；跨构建测试升级时，应使用具有固定批次 ID 的发布流程。使用自己拥有的应用 ID；workflow 默认使用 `com.wxxb789.deepseek-harness`。
 
-设置仓库变量 `DSH_DESKTOP_APP_ID`（可选）、`DSH_MAC_SIGNING_IDENTITY`（Developer ID Application 证书名称，不带前缀）及 `DSH_MAC_TEAM_ID`（十位 Apple Team ID）。设置仓库 secret：`DSH_MAC_P12_BASE64`（Developer ID Application `.p12` 文件的 base64）、`DSH_MAC_P12_PASSWORD`（未加密 `.p12` 可留空）、`DSH_MAC_NOTARY_P8_BASE64`（App Store Connect 公证 `.p8` 文件的 base64）、`DSH_MAC_NOTARY_KEY_ID` 和 `DSH_MAC_NOTARY_ISSUER`。缺少凭据时，macOS job 会在安装依赖前失败；Windows job 独立运行。签名文件解码到仓库以外的 runner 临时目录。Windows 安装包未签名，可能触发 SmartScreen；macOS 产物上传前必须通过有效的 Apple Developer ID 签名与公证。
+设置仓库变量 `DSH_DESKTOP_APP_ID`（可选）、`DSH_MAC_SIGNING_IDENTITY`（Developer ID Application 证书名称，不带前缀）及 `DSH_MAC_TEAM_ID`（十位 Apple Team ID）。设置仓库 secret：`DSH_MAC_P12_BASE64`（Developer ID Application `.p12` 文件的 base64）、`DSH_MAC_P12_PASSWORD`（未加密 `.p12` 可留空）、`DSH_MAC_NOTARY_P8_BASE64`（App Store Connect 公证 `.p8` 文件的 base64）、`DSH_MAC_NOTARY_KEY_ID` 和 `DSH_MAC_NOTARY_ISSUER`。缺少凭据时，macOS job 会在安装依赖前失败；Windows job 独立运行。签名文件和原样保留的 P12 密码写入仓库以外的 runner 临时目录；本地打包也可以在 `.env.macos` 中使用 `CSC_KEY_PASSWORD_FILE` 代替 `CSC_KEY_PASSWORD`。Windows 安装包未签名，可能触发 SmartScreen；macOS 产物上传前必须通过有效的 Apple Developer ID 签名与公证。
 
-构建 runner 会下载 npm 包；最终安装包包含 Electron、dsh 生产依赖、内置 pnpm 和运行时资源。用户安装与首次启动无需安装 Node.js、pnpm、npm，也无需访问 npm registry 来安装核心包。通过 Plugin Manager 安装外部插件仍会使用内置 pnpm，需要能访问配置的包来源。测试策略和更新源地址会写入应用，因此分发这些构建产物时，应填写自己控制且可访问的服务地址。
+构建 runner 会下载 npm 包；最终安装包包含 Electron、dsh 生产依赖、内置 pnpm 和运行时资源。用户安装与首次启动无需安装 Node.js、pnpm、npm，也无需访问 npm registry 来安装核心包。通过 Plugin Manager 安装外部插件仍会使用内置 pnpm，需要能访问配置的包来源。两个安装包都写入测试强制更新策略服务地址；只有签名的 macOS 安装包写入测试自动更新源地址，未签名的 Windows 安装包不具备自动更新功能。分发这些构建产物时，应填写自己控制且可访问的策略服务和 macOS 更新服务地址。
 
 ### Windows 安装界面
 
