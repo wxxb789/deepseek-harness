@@ -113,6 +113,19 @@ it('checks the assembled macOS runtime before notarizing and recording the relea
   expect(writeFileSync).toHaveBeenCalledOnce()
 })
 
+it('packages a standalone macOS app directly and smokes it without notarization or release metadata', async () => {
+  const { run, stages } = supervisor()
+  await packageTarget(parseDesktopPackageInvocation(['mac-arm64', '--standalone'], 'darwin', 'arm64'), {
+    DSH_DESKTOP_APP_ID: 'com.example.test', DSH_DESKTOP_STANDALONE: '1',
+  }, run)
+  expect(stages.at(-2)).toBe('exec electron-builder --config electron-builder.config.mjs --mac --arm64 --publish never')
+  expect(stages.at(-1)).toBe('exec tsx scripts/smoke-packaged-runtime.ts --unsigned')
+  expect(packageMacOSArtifacts).not.toHaveBeenCalled()
+  expect(withMacOSNotarizationProxy).not.toHaveBeenCalled()
+  expect(writeFileSync).not.toHaveBeenCalled()
+  expect(run.run.mock.calls.at(-2)?.[3].env).toMatchObject({ DSH_DESKTOP_STANDALONE: '1', DSH_DESKTOP_UNSIGNED: '1' })
+})
+
 it.each([false, true])('refuses macOS notarization and release records after an assembled-runtime failure (directory=%s)', async (directory) => {
   const { run } = supervisor('exec tsx scripts/smoke-packaged-runtime.ts')
   await expect(packageTarget(parseDesktopPackageInvocation(['mac-arm64', ...(directory ? ['--dir'] : [])], 'darwin', 'arm64'), environment, run))

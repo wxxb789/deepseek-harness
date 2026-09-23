@@ -45,6 +45,8 @@ REST reads use the repository `GITHUB_TOKEN`. Project validation uses a separate
 
 [Issue lifecycle](../workflows/issue-lifecycle.yml) mutates Project data independently of PR validation eligibility. PR opened/reopened events and body edits can advance resolving Issues to `In progress`; title-only edits do not. Review requests target `In review`. Changes-requested reviews target `In progress`, with the [human-ownership and terminal-status protections](../../.agents/notes/implemented/process/2026-08-10-event-directed-pr-review-status.md).
 
+The lifecycle job runs only in `deepseek-harness/deepseek-harness`, which owns the Project and App credentials. Forks skip this job.
+
 Approval-only and comment-only reviews do not allocate a lifecycle runner. PR pushes and label changes, and Issue assignment changes, do not trigger lifecycle work. Other subscribed Issue events maintain membership, state, and audit comments; exact subscriptions live in the workflow.
 
 PR opening initializes an empty Project `Start Date` for every referenced Issue, including informational references, using the PR creation date in the configured time zone. This lifecycle operation can add Project membership and needs Project write access; the informational-reference read exemption applies only to PR validation. [Planning-field ownership](../../.agents/notes/implemented/process/2026-09-02-project-local-issue-planning-fields.md) defines date preservation.
