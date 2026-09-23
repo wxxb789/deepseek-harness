@@ -157,7 +157,7 @@ production 发布使用产品版本本身，不传 `--build-version`。其上传
 
 打包、上传以及手动 macOS 签名检查使用 `apps/desktop/.env.windows` 或 `.env.macos`，由目标平台选择。复制对应的 [Windows 模板](.env.windows.example) 或 [macOS 模板](.env.macos.example)，填写本机配置；Git 忽略这两个本地文件，安装产物也不包含它们。发布字段只从目标文件读取，不回退到系统或 shell 中的同名变量；`PATH`、代理和构建工具环境仍保留。发布版本是命令参数而非发布字段，上传从打包写下的完成记录中读取它。文件使用 UTF-8，支持 BOM；相对证书、SignTool、Apple API Key 和钥匙串路径以 `apps/desktop` 为基准，变量值不做 shell 展开，包含 `#` 或空格的密码需要引号。CI 同样在运行前生成目标文件。
 
-每条打包命令在构建与下载前检查应用 ID、更新地址和该模式需要的签名配置，随后探测本次运行要用的外部工具：归档读取工具，以及 Windows 目标的安装器编译器。macOS 检查身份、Team ID、一套完整公证凭据、`CSC_LINK` 指定的可读本地 p12 文件、显式配置的 `CSC_KEY_PASSWORD`，以及引用的 API Key 和钥匙串文件；Windows 检查公开代码签名证书、SignTool 文件、容器名称和 PIN 格式。仅准备 Windows 资源或显式未签名打包不要求签名凭据。配置检查不验证 PIN 是否正确、Token 是否登录、钥匙串是否解锁或 Apple 是否接受凭据；实际签名与公证负责这些检查。`--build-version auto` 会访问目标 bucket，`--check` 下同样如此。单独运行相同检查：
+正式发布打包命令在构建与下载前检查应用 ID、更新地址和该模式需要的签名配置；独立打包命令只检查应用 ID。两种模式随后都会探测本次运行要用的外部工具：归档读取工具，以及 Windows 目标的安装器编译器。签名版 macOS 打包检查身份、Team ID、一套完整公证凭据、`CSC_LINK` 指定的可读本地 p12 文件、显式配置的 `CSC_KEY_PASSWORD`，以及引用的 API Key 和钥匙串文件；签名版 Windows 打包检查公开代码签名证书、SignTool 文件、容器名称和 PIN 格式。仅准备 Windows 资源或显式未签名打包不要求签名凭据。配置检查不验证 PIN 是否正确、Token 是否登录、钥匙串是否解锁或 Apple 是否接受凭据；实际签名与公证负责这些检查。`--build-version auto` 会访问目标 bucket，`--check` 下同样如此。单独运行相同检查：
 
 ```sh
 pnpm --dir apps/desktop run check:package
@@ -269,11 +269,11 @@ pnpm run package:desktop:win:x64:unsigned
 
 ### GitHub Actions 安装包
 
-运行 [Build Desktop installers](../../.github/workflows/build-desktop-portable.yml)，填写测试更新源、强制更新策略服务及测试登录页面各自的 HTTPS origin。该 workflow 在对应架构的 GitHub runner 上构建经签名和公证的 macOS arm64 DMG/ZIP，以及未签名的 Windows x64 NSIS 安装包，并将产物保留七天。它不会发布更新源。每个 job 会生成随机测试批次 ID；跨构建测试升级时，应使用具有固定批次 ID 的发布流程。使用自己拥有的应用 ID；workflow 默认使用 `com.wxxb789.deepseek-harness`。
+运行 [Build Desktop installers](../../.github/workflows/build-desktop-portable.yml)，无需填写输入。该 workflow 在对应架构的 GitHub runner 上构建独立使用的 macOS arm64 DMG/ZIP 和 Windows x64 NSIS 安装包，并将产物保留七天。可将仓库变量 `DSH_DESKTOP_APP_ID` 设置为自己拥有的反向域名标识；默认值为 `com.wxxb789.deepseek-harness`。独立打包命令从目标 dotenv 文件读取 `DSH_DESKTOP_STANDALONE=1`，不写入策略或更新元数据，也不生成发布完成记录。普通签名打包和上传命令仍保留正式发布要求。
 
-设置仓库变量 `DSH_DESKTOP_APP_ID`（可选）、`DSH_MAC_SIGNING_IDENTITY`（Developer ID Application 证书名称，不带前缀）及 `DSH_MAC_TEAM_ID`（十位 Apple Team ID）。设置仓库 secret：`DSH_MAC_P12_BASE64`（Developer ID Application `.p12` 文件的 base64）、`DSH_MAC_P12_PASSWORD`（未加密 `.p12` 可留空）、`DSH_MAC_NOTARY_P8_BASE64`（App Store Connect 公证 `.p8` 文件的 base64）、`DSH_MAC_NOTARY_KEY_ID` 和 `DSH_MAC_NOTARY_ISSUER`。缺少凭据时，macOS job 会在安装依赖前失败；Windows job 独立运行。签名文件和原样保留的 P12 密码写入仓库以外的 runner 临时目录；本地打包也可以在 `.env.macos` 中使用 `CSC_KEY_PASSWORD_FILE` 代替 `CSC_KEY_PASSWORD`。Windows 安装包未签名，可能触发 SmartScreen；macOS 产物上传前必须通过有效的 Apple Developer ID 签名与公证。
+该 workflow 不需要更新服务器、策略服务器、登录页面、Apple 证书或公证凭据。两种产物都未签名：Windows 可能显示 SmartScreen 警告；macOS Gatekeeper 可能阻止启动，直到用户明确允许。此类独立产物用于手动安装和替换，不适用于签名分发或自动升级。
 
-构建 runner 会下载 npm 包；最终安装包包含 Electron、dsh 生产依赖、内置 pnpm 和运行时资源。用户安装与首次启动无需安装 Node.js、pnpm、npm，也无需访问 npm registry 来安装核心包。通过 Plugin Manager 安装外部插件仍会使用内置 pnpm，需要能访问配置的包来源。两个安装包都写入测试强制更新策略服务地址；只有签名的 macOS 安装包写入测试自动更新源地址，未签名的 Windows 安装包不具备自动更新功能。分发这些构建产物时，应填写自己控制且可访问的策略服务和 macOS 更新服务地址。
+构建 runner 会下载 npm 包；最终安装包包含 Electron、dsh 生产依赖、内置 pnpm 和运行时资源。用户安装与首次启动无需安装 Node.js、pnpm、npm，也无需访问 npm registry 来安装核心包。通过 Plugin Manager 安装外部插件仍会使用内置 pnpm，需要能访问配置的包来源。两种独立安装包都不检查应用更新或强制更新策略；需要手动安装较新的构建版本。
 
 ### Windows 安装界面
 
@@ -344,15 +344,15 @@ pnpm run prepare:desktop
 
 这条诊断命令是另一种停止位置，并非两条命令构建流程的前半段。之后执行 `package:desktop*` 时仍会重新完成正式构建与准备，避免使用陈旧的 dsh 包、运行时文件或 dsh 内容。
 
-每条打包命令都会构建仓库，打包以 dsh 和私有 Desktop Host 为根的第一方生产依赖闭包，并准备目标专用的 Electron 分发包与 pnpm CLI。`prepare:dsh` 在构建时安装一次生产依赖图，准备物化包供 electron-builder 归档到 `app.asar/dsh`，移除包管理器元数据，并生成包含共享包版本和最终文件哈希的 `desktop-runtime.json`。在 macOS 上，它先签名并验证原生文件，再生成清单；electron-builder 不对已签名的此目录重复进行嵌套签名。资源映射明确包含默认根目录过滤器会忽略的 `dsh/node_modules`；准备完成的运行时清单在原生签名后检查。原生可执行文件及库解包到 ASAR 旁；Python、独立 Node 和 pnpm 保留在外部 runtime 资源中。Windows 打包逐项检查准备好的 PE，确认其 ASAR 条目已标记为解包，且磁盘副本字节一致；未签名构建也执行此检查。Builder glob 规则用单字符通配符匹配 PE 文件名中的花括号，因此同目录中名称匹配的文件也可能被解包。准备好的运行时 smoke 沿用已验证的目标描述符，不使用构建宿主的架构。签名安装包、公证、已安装应用升级和各目标原生模块的验收需要发布环境。
+每条打包命令都会构建仓库，打包以 dsh 和私有 Desktop Host 为根的第一方生产依赖闭包，并准备目标专用的 Electron 分发包与 pnpm CLI。`prepare:dsh` 在构建时安装一次生产依赖图，准备物化包供 electron-builder 归档到 `app.asar/dsh`，移除包管理器元数据，并生成包含共享包版本和最终文件哈希的 `desktop-runtime.json`。签名版 macOS 构建先签名并验证原生文件，再生成清单；electron-builder 不对已签名的此目录重复进行嵌套签名。资源映射明确包含默认根目录过滤器会忽略的 `dsh/node_modules`；准备完成的运行时清单在准备工作及可选的原生签名后检查。原生可执行文件及库解包到 ASAR 旁；Python、独立 Node 和 pnpm 保留在外部 runtime 资源中。Windows 打包逐项检查准备好的 PE，确认其 ASAR 条目已标记为解包，且磁盘副本字节一致；未签名构建也执行此检查。Builder glob 规则用单字符通配符匹配 PE 文件名中的花括号，因此同目录中名称匹配的文件也可能被解包。准备好的运行时 smoke 沿用已验证的目标描述符，不使用构建宿主的架构。签名安装包、公证、已安装应用升级和各目标原生模块的验收需要发布环境。
 
-macOS 打包在组装 App 时、代码签名前写入 `Contents/Resources/app-update.yml`，供并行 ZIP 与 DMG 路线使用的目录构建也执行此操作。签名钩子验证准确的更新源和 updater 缓存目录。写入发布完成记录前，流程会再次检查两条路线的副本和最终移入的 App；配置缺失或不匹配会阻止移入产物，因而也会阻止上传。
+签名版 macOS 打包在组装 App 时、代码签名前写入 `Contents/Resources/app-update.yml`，供并行 ZIP 与 DMG 路线使用的目录构建也执行此操作。签名钩子验证准确的更新源和 updater 缓存目录。写入发布完成记录前，流程会再次检查两条路线的副本和最终移入的 App；配置缺失或不匹配会阻止移入产物，因而也会阻止上传。
 
 未压缩产物包含 Electron、物化后的 dsh 生产依赖树、pnpm，以及壳应用。安装包大小与文件系统占用不同；发布验收需要测量两者，以及 profile 插件存储和首次启动耗时。此布局用更多应用内文件换取消除用户机器上的核心包安装过程。
 
 ## 更新
 
-打包应用在启动后异步检查固定 Nightly。常规轮询以十分钟为基础间隔，每次独立采样 ±20% 的随机抖动。每次检查失败将基础延迟翻倍，上限为一小时；成功后重置。随机延迟不超过该上限，并从全部复用调用结算后开始计时。本地化的“检查更新…”菜单项（Windows 可从顶栏的“应用”菜单进入）立即执行，并复用正在进行的检查。回到前台和系统恢复时遵守相同的单调时钟截止时间。新收到的强更策略也会立即请求检查更新清单。自动检查从不弹窗或下载安装包。手动检查显示正在检查、失败或包含已安装版本号的无更新反馈。常规更新弹窗原位渐入渐出；连续弹窗替换卡片内容并重置其滚动位置，保留蒙层与背景模糊。
+带更新元数据的打包应用在启动后异步检查固定 Nightly；独立安装包没有更新元数据，也不请求更新源。常规轮询以十分钟为基础间隔，每次独立采样 ±20% 的随机抖动。每次检查失败将基础延迟翻倍，上限为一小时；成功后重置。随机延迟不超过该上限，并从全部复用调用结算后开始计时。本地化的“检查更新…”菜单项（Windows 可从顶栏的“应用”菜单进入）立即执行，并复用正在进行的检查。回到前台和系统恢复时遵守相同的单调时钟截止时间。新收到的强更策略也会立即请求检查更新清单。自动检查从不弹窗或下载安装包。手动检查显示正在检查、失败或包含已安装版本号的无更新反馈。常规更新弹窗原位渐入渐出；连续弹窗替换卡片内容并重置其滚动位置，保留蒙层与背景模糊。
 
 `DSH_DESKTOP_UPDATE_CHECK_INTERVAL_MS` 配置常规基础间隔，`DSH_DESKTOP_UPDATE_CHECK_MAX_BACKOFF_MS` 配置上限；两者均接受 1000 至 2147483647 的整数毫秒数，且上限不能小于间隔。省略上限时取一小时与间隔中的较大值。`DSH_DESKTOP_UPDATE_CHECK_JITTER` 配置 0 至 1 的抖动比例，默认 `0.2`；最终延迟至少一秒，且不超过上限。这些配置不改变强更策略轮询，也不授权下载重试。
 

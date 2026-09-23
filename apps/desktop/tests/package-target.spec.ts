@@ -85,6 +85,17 @@ describe('desktop package target', () => {
       .toThrow(/cannot use --prepare-only/u)
   })
 
+  it('selects standalone unsigned builds on both supported platforms without weakening release flags', () => {
+    expect(parseDesktopPackageInvocation(['mac-arm64', '--standalone'], 'darwin', 'arm64'))
+      .toMatchObject({ standalone: true, unsigned: true, target: { platform: 'darwin' } })
+    expect(parseDesktopPackageInvocation(['win-x64', '--standalone'], 'win32', 'x64'))
+      .toMatchObject({ standalone: true, unsigned: true, target: { platform: 'win32' } })
+    expect(() => parseDesktopPackageInvocation(['win-x64', '--standalone', '--unsigned'], 'win32', 'x64'))
+      .toThrow(/cannot use --unsigned/u)
+    expect(() => parseDesktopPackageInvocation(['mac-arm64', '--standalone', '--prepare-only'], 'darwin', 'arm64'))
+      .toThrow(/cannot use --unsigned or --prepare-only/u)
+  })
+
   it('removes ambient certificate inputs for unsigned builds and overrides an inherited signing mode', () => {
     const environment = {
       DSH_DESKTOP_APP_ID: 'com.example.desktop',

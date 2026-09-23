@@ -122,6 +122,38 @@ describe('desktop macOS release signature', () => {
     })
   })
 
+  it('packages standalone macOS artifacts without policy, updater, Apple signing or notarization', async () => {
+    const { createElectronBuilderConfig } = await import('../electron-builder.config.mjs')
+    const config = createElectronBuilderConfig({
+      DSH_DESKTOP_APP_ID: 'com.example.desktop',
+      DSH_DESKTOP_TARGET_PLATFORM: 'darwin',
+      DSH_DESKTOP_TARGET_ARCH: 'arm64',
+      DSH_DESKTOP_STANDALONE: '1',
+      DSH_DESKTOP_UNSIGNED: '1',
+    }, 'darwin', 'arm64')
+    expect(config.extraMetadata).not.toHaveProperty('dshMandatoryUpdatePolicy')
+    expect(config.publish).toBeNull()
+    expect(config.artifactName).toContain('-unsigned.')
+    expect(portablePath(config.directories.output)).toContain('/targets/mac-arm64/unsigned-artifacts')
+    expect(config.mac).toMatchObject({ identity: null, forceCodeSigning: false, hardenedRuntime: false, notarize: false })
+    expect(config.dmg).toMatchObject({ sign: false, writeUpdateInfo: false })
+    expect(() => createElectronBuilderConfig({ DSH_DESKTOP_APP_ID: 'com.example.desktop',
+      DSH_DESKTOP_STANDALONE: '1', DSH_DESKTOP_UNSIGNED: '0' }, 'darwin', 'arm64'))
+      .toThrow(/must be unsigned/u)
+  })
+
+  it('omits mandatory policy and updater metadata from standalone Windows installers', async () => {
+    const { createElectronBuilderConfig } = await import('../electron-builder.config.mjs')
+    const config = createElectronBuilderConfig({
+      DSH_DESKTOP_APP_ID: 'com.example.desktop', DSH_DESKTOP_TARGET_PLATFORM: 'win32',
+      DSH_DESKTOP_TARGET_ARCH: 'x64', DSH_DESKTOP_STANDALONE: '1', DSH_DESKTOP_UNSIGNED: '1',
+    }, 'win32', 'x64')
+    expect(config.extraMetadata).not.toHaveProperty('dshMandatoryUpdatePolicy')
+    expect(config.publish).toBeNull()
+    expect(portablePath(config.directories.output)).toContain('/targets/win-x64/unsigned-artifacts')
+    expect(config.win.forceCodeSigning).toBe(false)
+  })
+
   it('rejects unsigned macOS builds and malformed signing modes', async () => {
     const { createElectronBuilderConfig } = await import('../electron-builder.config.mjs')
     expect(() => createElectronBuilderConfig({ ...RELEASE_ENVIRONMENT, DSH_DESKTOP_UNSIGNED: '1' }))
