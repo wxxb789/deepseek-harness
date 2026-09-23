@@ -14,6 +14,20 @@ const runnerPrivatePnpmDestination = /^\$\{\{ runner\.temp \}\}\/setup-pnpm-\$\{
 const nativeWindowsPnpmDestination = '${{ runner.temp }}/setup-pnpm-js-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}'
 
 describe('CI workflow', () => {
+  it('builds the native entry before the standalone Desktop scripts import it', () => {
+    const job = workflowJob(loadWorkflow('.github/workflows/build-desktop-portable.yml'), 'build')
+    if (!Array.isArray(job.steps)) throw new TypeError('Desktop build job must define steps')
+    const steps = job.steps.filter(isRecord)
+    const install = steps.findIndex(step => step.run === 'pnpm install --frozen-lockfile')
+    const nativeEntry = steps.findIndex(step => step.run === 'node ./node_modules/typescript/bin/tsc -b native/system/tsconfig.json')
+    const mac = steps.findIndex(step => step.run === 'pnpm run package:desktop:mac:arm64:standalone')
+    const windows = steps.findIndex(step => step.run === 'pnpm run package:desktop:win:x64:standalone')
+    expect(install).toBeGreaterThanOrEqual(0)
+    expect(nativeEntry).toBeGreaterThan(install)
+    expect(mac).toBeGreaterThan(nativeEntry)
+    expect(windows).toBeGreaterThan(nativeEntry)
+  })
+
   it('prepares confinement before Node compatibility smokes', () => {
     const job = workflowJob(loadWorkflow('.github/workflows/ci.yml'), 'node-compat')
     if (!Array.isArray(job.steps)) throw new TypeError('Node compatibility job must define steps')

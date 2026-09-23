@@ -78,6 +78,9 @@ jobs:
       - name: Install dependencies (build runner only)
         run: pnpm install --frozen-lockfile
 
+      - name: Build native system workspace entry
+        run: node ./node_modules/typescript/bin/tsc -b native/system/tsconfig.json
+
       - name: Package standalone macOS arm64 app
         if: runner.os == 'macOS'
         run: pnpm run package:desktop:mac:arm64:standalone
