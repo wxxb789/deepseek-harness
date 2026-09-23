@@ -1,0 +1,110 @@
+name: Build Desktop installers
+
+# Standalone artifacts bundle their runtime without any online update or policy services.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: desktop-installers-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DSH_TELEMETRY_DISABLED: '1'
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: mac-arm64
+            runner: macos-latest
+          - target: win-x64
+            runner: windows-2025
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: actions/setup-python@v6.3.0
+        with:
+          python-version: '3.11'
+
+      - name: Enable Windows symlinks
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >-
+          reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock"
+          /t REG_DWORD /f /v "AllowDevelopmentWithoutDevLicense" /d "1"
+
+      - name: Configure packaging
+        shell: bash
+        env:
+          APP_ID: ${{ vars.DSH_DESKTOP_APP_ID || 'com.wxxb789.deepseek-harness' }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          app_id = os.environ['APP_ID']
+          if re.fullmatch(r'[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+', app_id) is None:
+              raise SystemExit('DSH_DESKTOP_APP_ID must be a reverse-DNS identifier')
+          target = os.environ['RUNNER_OS']
+          if target == 'macOS':
+              filename = '.env.macos'
+          elif target != 'Windows':
+              raise SystemExit(f'Unsupported runner OS: {target}')
+          else:
+              filename = '.env.windows'
+          path = Path('apps/desktop') / filename
+          path.write_text(f'DSH_DESKTOP_APP_ID={app_id}\nDSH_DESKTOP_STANDALONE=1\n', encoding='utf-8')
+          path.chmod(0o600)
+          PY
+
+      - name: Install dependencies (build runner only)
+        run: pnpm install --frozen-lockfile
+
+      - name: Build native system workspace entry
+        run: node ./node_modules/typescript/bin/tsc -b native/system/tsconfig.json
+
+      - name: Package standalone macOS arm64 app
+        if: runner.os == 'macOS'
+        run: pnpm run package:desktop:mac:arm64:standalone
+
+      - name: Package standalone Windows x64 installer
+        if: runner.os == 'Windows'
+        run: pnpm run package:desktop:win:x64:standalone
+
+      - name: Upload macOS installers
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v7
+        with:
+          name: dsh-desktop-mac-arm64-standalone-${{ github.sha }}
+          path: |
+            apps/desktop/.desktop-build/targets/mac-arm64/unsigned-artifacts/*.dmg
+            apps/desktop/.desktop-build/targets/mac-arm64/unsigned-artifacts/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Windows installer
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: dsh-desktop-win-x64-standalone-${{ github.sha }}
+          path: apps/desktop/.desktop-build/targets/win-x64/unsigned-artifacts/*.exe
+          if-no-files-found: error
+          retention-days: 7

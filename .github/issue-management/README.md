@@ -26,6 +26,8 @@ Contributors can link Issues as context without coupling pull-request validation
 
 [Issue policy](../workflows/issue-policy.yml) applies to non-draft, human-authored PRs with a requested review or submitted review. Exempt PRs finish successfully without resolving Issue references, minting a Project App token, or querying ProjectV2. Eligibility uses live repository state before expensive reads; the required job remains present for subscribed events. Final validation re-reads live state: preflight is not a cached verdict or an exemption for metadata edits.
 
+The job runs only in `deepseek-harness/deepseek-harness`: its trusted configuration reads that repository and its organization Project. Forks skip the job instead of querying an unrelated PR number or requiring the upstream Project App.
+
 Selective preflight requires [selective-preflight.json](selective-preflight.json) in the trusted checkout. Without that marker, the workflow preserves legacy behavior: human PRs receive a Project token and full legacy validation; Bot/App PRs skip both. A failed supported preflight fails the job rather than falling back.
 
 Eligible PRs need at least one same-repository Issue reference, exactly one canonical `kind/*`, at least one `area/*`, and at most one `p0`–`p3` label. Unsupported kinds, retired aliases, and `source/*` labels fail validation; [label taxonomy](../../.agents/notes/implemented/process/2026-08-08-unified-github-label-taxonomy.md) owns their meanings.
@@ -42,6 +44,8 @@ REST reads use the repository `GITHUB_TOKEN`. Project validation uses a separate
 ## Lifecycle events
 
 [Issue lifecycle](../workflows/issue-lifecycle.yml) mutates Project data independently of PR validation eligibility. PR opened/reopened events and body edits can advance resolving Issues to `In progress`; title-only edits do not. Review requests target `In review`. Changes-requested reviews target `In progress`, with the [human-ownership and terminal-status protections](../../.agents/notes/implemented/process/2026-08-10-event-directed-pr-review-status.md).
+
+The lifecycle job runs only in `deepseek-harness/deepseek-harness`, which owns the Project and App credentials. Forks skip this job.
 
 Approval-only and comment-only reviews do not allocate a lifecycle runner. PR pushes and label changes, and Issue assignment changes, do not trigger lifecycle work. Other subscribed Issue events maintain membership, state, and audit comments; exact subscriptions live in the workflow.
 

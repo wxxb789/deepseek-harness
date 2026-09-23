@@ -14,6 +14,20 @@ const runnerPrivatePnpmDestination = /^\$\{\{ runner\.temp \}\}\/setup-pnpm-\$\{
 const nativeWindowsPnpmDestination = '${{ runner.temp }}/setup-pnpm-js-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}'
 
 describe('CI workflow', () => {
+  it('builds the native entry before the standalone Desktop scripts import it', () => {
+    const job = workflowJob(loadWorkflow('.github/workflows/build-desktop-portable.yml'), 'build')
+    if (!Array.isArray(job.steps)) throw new TypeError('Desktop build job must define steps')
+    const steps = job.steps.filter(isRecord)
+    const install = steps.findIndex(step => step.run === 'pnpm install --frozen-lockfile')
+    const nativeEntry = steps.findIndex(step => step.run === 'node ./node_modules/typescript/bin/tsc -b native/system/tsconfig.json')
+    const mac = steps.findIndex(step => step.run === 'pnpm run package:desktop:mac:arm64:standalone')
+    const windows = steps.findIndex(step => step.run === 'pnpm run package:desktop:win:x64:standalone')
+    expect(install).toBeGreaterThanOrEqual(0)
+    expect(nativeEntry).toBeGreaterThan(install)
+    expect(mac).toBeGreaterThan(nativeEntry)
+    expect(windows).toBeGreaterThan(nativeEntry)
+  })
+
   it('prepares confinement before Node compatibility smokes', () => {
     const job = workflowJob(loadWorkflow('.github/workflows/ci.yml'), 'node-compat')
     if (!Array.isArray(job.steps)) throw new TypeError('Node compatibility job must define steps')
@@ -1036,6 +1050,7 @@ describe('Issue lifecycle workflow', () => {
 
     expect(lifecycle.on).toHaveProperty('pull_request')
     expect(lifecycle.on).toHaveProperty('pull_request_review')
+    expect(lifecycleJob.if).toContain("github.repository == 'deepseek-harness/deepseek-harness'")
     expect(lifecycleJob.if).toContain("github.event.review.state == 'changes_requested'")
     expect(lifecycleJob.if).toContain('github.event.changes.body != null')
     // Keep the subscription-type gates: issue-lifecycle does not re-subscribe
@@ -1078,7 +1093,7 @@ describe('Issue lifecycle workflow', () => {
     expect(preflightStep?.run).toContain('if [ -f .github/issue-management/selective-preflight.json ]; then')
     expect(preflightStep?.run).toContain('node .github/issue-management/policy.mjs pr-preflight')
     expect(preflightStep?.if).toBeUndefined()
-    expect(policyJob.if).toBeUndefined()
+    expect(policyJob.if).toBe("github.repository == 'deepseek-harness/deepseek-harness'")
     expect(validateStep?.if).toBe("${{ steps.preflight.outputs.legacy-automated != 'true' }}")
 
     expect(tokenStep).toMatchObject({

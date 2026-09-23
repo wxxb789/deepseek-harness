@@ -23,6 +23,23 @@ async function withDirectory(action: (directory: string) => Promise<void>): Prom
 }
 
 describe('Desktop local packaging configuration', () => {
+  it.each([WINDOWS, MACOS])('accepts standalone %s packages without any online services or signing credentials', async (target) => {
+    await withDirectory(async (directory) => {
+      const file = target.platform === 'win32' ? '.env.windows' : '.env.macos'
+      await writeFile(join(directory, file), 'DSH_DESKTOP_APP_ID=com.example.desktop\nDSH_DESKTOP_STANDALONE=1\n')
+      const settings = loadDesktopPackageEnvironment(target.platform, {
+        DSH_DESKTOP_STANDALONE: '0', DOWNLOAD_TEST_ORIGIN: 'https://stale.example.com',
+      }, directory)
+      expect(settings).toEqual({ DSH_DESKTOP_APP_ID: 'com.example.desktop', DSH_DESKTOP_STANDALONE: '1' })
+      expect(() => { validateDesktopPackageEnvironment(settings, target, { standalone: true, unsigned: true }) }).not.toThrow()
+      expect(() => { validateDesktopPackageEnvironment(settings, target) }).toThrow(/requires --standalone/u)
+      expect(() => {
+        validateDesktopPackageEnvironment({ ...settings, DOWNLOAD_TEST_ORIGIN: 'https://bad.example.com' },
+          target, { standalone: true, unsigned: true })
+      }).toThrow(/cannot configure update or policy services/u)
+    })
+  })
+
   it('takes cache concurrency from the Windows file and defaults to four without ambient overrides', async () => {
     await withDirectory(async (directory) => {
       const parent = { DSH_DESKTOP_WINDOWS_SIGNATURE_CACHE_CONCURRENCY: '8' }
@@ -73,6 +90,25 @@ describe('Desktop local packaging configuration', () => {
       })
       expect(parent.DSH_DESKTOP_WINDOWS_TOKEN_PIN).toBe('stale-pin')
       expect(parent.dsh_desktop_mandatory_update_config).toBe('stale-policy')
+    })
+  })
+
+  it('reads an exact macOS P12 password from a file without dotenv quote or escape decoding', async () => {
+    await withDirectory(async (directory) => {
+      const password = 'a\'b"\\n# $end\n'
+      await writeFile(join(directory, 'password.txt'), password)
+      await writeFile(join(directory, '.env.macos'), 'CSC_KEY_PASSWORD_FILE=password.txt\n')
+      expect(loadDesktopPackageEnvironment('darwin', { CSC_KEY_PASSWORD: 'stale' }, directory))
+        .toEqual({ CSC_KEY_PASSWORD: password })
+
+      await writeFile(join(directory, 'password.txt'), '')
+      expect(loadDesktopPackageEnvironment('darwin', {}, directory).CSC_KEY_PASSWORD).toBe('')
+      await writeFile(join(directory, '.env.macos'), 'CSC_KEY_PASSWORD_FILE=missing.txt\n')
+      expect(() => loadDesktopPackageEnvironment('darwin', {}, directory)).toThrow(/CSC_KEY_PASSWORD_FILE must identify a readable local file/u)
+      await writeFile(join(directory, '.env.macos'), 'CSC_KEY_PASSWORD_FILE=password.txt\nCSC_KEY_PASSWORD=other\n')
+      expect(() => loadDesktopPackageEnvironment('darwin', {}, directory)).toThrow(/set only one of CSC_KEY_PASSWORD/u)
+      await writeFile(join(directory, '.env.windows'), 'CSC_KEY_PASSWORD_FILE=password.txt\n')
+      expect(() => loadDesktopPackageEnvironment('win32', {}, directory)).toThrow(/unsupported setting CSC_KEY_PASSWORD_FILE/u)
     })
   })
 

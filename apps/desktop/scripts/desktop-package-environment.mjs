@@ -13,10 +13,10 @@ import { resolveWindowsSignatureCacheDirectory } from './windows-signature-cache
 import { resolveWindowsPackageSettings } from './windows-package-settings.mjs'
 
 const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
-const SHARED_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|NPM_REGISTRY|MANDATORY_UPDATE_(?:CONFIG|(?:TEST|PROD)_ORIGIN))|DOWNLOAD_TEST_RELEASE_ID|DOWNLOAD_(?:TEST|PROD)_(?:ORIGIN|COS_BUCKET|COS_SECRET_ID|COS_SECRET_KEY))$/u
+const SHARED_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|STANDALONE|NPM_REGISTRY|MANDATORY_UPDATE_(?:CONFIG|(?:TEST|PROD)_ORIGIN))|DOWNLOAD_TEST_RELEASE_ID|DOWNLOAD_(?:TEST|PROD)_(?:ORIGIN|COS_BUCKET|COS_SECRET_ID|COS_SECRET_KEY))$/u
 const WINDOWS_SETTING = /^DSH_DESKTOP_WINDOWS_(?:CER_FILE|SIGNTOOL|KEY_CONTAINER|TOKEN_PIN|SIGNATURE_CACHE_DIR|SIGNATURE_CACHE_CONCURRENCY)$/u
-const MACOS_SETTING = /^(?:DSH_DESKTOP_MACOS_(?:SIGNING_IDENTITY|TEAM_ID|PACK_CONCURRENCY|DOWNLOAD_PROXY|NOTARIZATION_PROXY)|APPLE_(?:API_KEY|API_KEY_ID|API_ISSUER|ID|APP_SPECIFIC_PASSWORD|TEAM_ID|KEYCHAIN|KEYCHAIN_PROFILE)|CSC_(?:LINK|KEY_PASSWORD))$/u
-const AMBIENT_RELEASE_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|MANDATORY_UPDATE_.*|WINDOWS_.*|MACOS_.*)|APPLE_.*|(?:WIN_)?CSC_.*|DOWNLOAD_(?:TEST|PROD)_.*)$/iu
+const MACOS_SETTING = /^(?:DSH_DESKTOP_MACOS_(?:SIGNING_IDENTITY|TEAM_ID|PACK_CONCURRENCY|DOWNLOAD_PROXY|NOTARIZATION_PROXY)|APPLE_(?:API_KEY|API_KEY_ID|API_ISSUER|ID|APP_SPECIFIC_PASSWORD|TEAM_ID|KEYCHAIN|KEYCHAIN_PROFILE)|CSC_(?:LINK|KEY_PASSWORD(?:_FILE)?))$/u
+const AMBIENT_RELEASE_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|STANDALONE|MANDATORY_UPDATE_.*|WINDOWS_.*|MACOS_.*)|APPLE_.*|(?:WIN_)?CSC_.*|DOWNLOAD_(?:TEST|PROD)_.*)$/iu
 const FILE_SETTINGS = ['DSH_DESKTOP_WINDOWS_CER_FILE', 'DSH_DESKTOP_WINDOWS_SIGNTOOL', 'APPLE_API_KEY', 'APPLE_KEYCHAIN', 'CSC_LINK']
 
 /**
@@ -53,6 +53,21 @@ export function loadDesktopPackageEnvironment(platform, environment = process.en
   for (const name of FILE_SETTINGS) {
     if (settings[name]?.trim()) settings[name] = resolve(dirname(path), settings[name].trim())
   }
+  if (Object.hasOwn(settings, 'CSC_KEY_PASSWORD_FILE')) {
+    if (Object.hasOwn(settings, 'CSC_KEY_PASSWORD')) {
+      throw new Error('desktop package: set only one of CSC_KEY_PASSWORD and CSC_KEY_PASSWORD_FILE')
+    }
+    const passwordFile = settings.CSC_KEY_PASSWORD_FILE?.trim()
+    if (!passwordFile) throw new Error('desktop package: CSC_KEY_PASSWORD_FILE must identify a readable local file')
+    try {
+      settings.CSC_KEY_PASSWORD = readFileSync(resolve(dirname(path), passwordFile), 'utf8')
+    }
+    catch {
+      throw new Error('desktop package: CSC_KEY_PASSWORD_FILE must identify a readable local file')
+    }
+    delete settings.CSC_KEY_PASSWORD_FILE
+    if (settings.CSC_KEY_PASSWORD.includes('\0')) throw new Error('desktop package: CSC_KEY_PASSWORD cannot contain a NUL character')
+  }
   return {
     ...Object.fromEntries(Object.entries(environment).filter(([name]) => !AMBIENT_RELEASE_SETTING.test(name))),
     ...settings,
@@ -73,12 +88,24 @@ function requireReadableFile(environment, name) {
  * Validate release configuration before preparation without invoking a token or Apple's services.
  * @param {NodeJS.ProcessEnv} environment File-owned release settings.
  * @param {{ platform: 'win32' | 'darwin', arch: string }} target Selected release target.
- * @param {{ unsigned?: boolean, prepareOnly?: boolean }} options Explicit packaging mode.
+ * @param {{ unsigned?: boolean, standalone?: boolean, prepareOnly?: boolean }} options Explicit packaging mode.
  * @returns {void}
  */
 export function validateDesktopPackageEnvironment(environment, target, options = {}) {
   resolveDesktopAppId(environment)
   resolveNpmRegistry(environment)
+  if (options.standalone) {
+    if (!options.unsigned || environment.DSH_DESKTOP_STANDALONE !== '1') {
+      throw new Error('desktop package: standalone builds require unsigned packaging and DSH_DESKTOP_STANDALONE=1')
+    }
+    if (Object.keys(environment).some(name => /^(?:DOWNLOAD_(?:TEST|PROD)_|DSH_DESKTOP_(?:AUTO_UPDATE_ENV|MANDATORY_UPDATE_))/u.test(name))) {
+      throw new Error('desktop package: standalone builds cannot configure update or policy services')
+    }
+    return
+  }
+  if (environment.DSH_DESKTOP_STANDALONE !== undefined) {
+    throw new Error('desktop package: DSH_DESKTOP_STANDALONE requires --standalone')
+  }
   resolveDesktopPolicyEnvironment(environment)
   if (target.platform === 'darwin') resolveMacOSPackageSettings(environment)
   else resolveWindowsPackageSettings(environment)
